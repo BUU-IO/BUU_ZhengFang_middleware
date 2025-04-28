@@ -1,0 +1,2 @@
+# BUU_ZhengFang_middleware
+BUUCC-对接教务系统中间件供其他服务使用
