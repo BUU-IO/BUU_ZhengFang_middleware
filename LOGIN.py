@@ -56,7 +56,6 @@ class Account:
         for img in imgs:
             if img.get("id") == "icode":
                 useimg = img.get("src")
-                print(useimg)
         # 联大的登录需要带header和cookies
         image_response = self.session.get(
             BUU.CheckCodeURL + useimg,
@@ -78,7 +77,6 @@ class Account:
 
     def __get_check_code_ocr(self):
         img_path = self.__refresh_code()
-        print("###Identify checkCode")
         code = OCR_CODE.run(img_path, dir_now=os.getcwd())
         # 识别完成后删除临时文件
         try:
@@ -88,54 +86,49 @@ class Account:
         self.POSTDate["txtSecretCode"] = code
 
     # 登录进入主页
-    def login(self):
-        print("#Begin to login")
-        # print("##Get init page")
-        while True:
-            init_response = self.session.get(url=BUU.MainURL, headers=BUU.InitHeader)
-            if init_response.ok:
-                print("##GET login page succeed!")
-                break
-        self.soup = BeautifulSoup(init_response.text, "lxml")
-        self.POSTDate["__VIEWSTATE"] = self.soup.find(
-            "input", attrs={"name": "__VIEWSTATE"}
-        )["value"]
-        self.POSTDate["txtKeyModulus"] = self.soup.find(
-            "input", attrs={"name": "txtKeyModulus"}
-        )["value"]
-        # print("###GET StateCode:", self.POSTDate["__VIEWSTATE"])  # 随机码
-        # print("###GET txtKeyModulus:", self.POSTDate["txtKeyModulus"])  # KeyModulus
-        # print("###GET checkCode")
-        message = self.POSTDate["TextBox2"]
-        # print("message":message)
-        exponent = int(self.POSTDate["txtKeyExponent"], 16)
-        modulus = int(self.POSTDate["txtKeyModulus"], 16)
-        rsa_pubkey = rsa.PublicKey(modulus, exponent)
-        # print("rsa_pubkey:"rsa_pubkey)
-        passwd = rsa.encrypt(message.encode("utf-8"), rsa_pubkey)
-        # print("passwd:"passwd)
-        passwd = binascii.b2a_hex(passwd).decode("ascii")
-        self.POSTDate["TextBox2"] = passwd
-        self.__get_check_code_ocr()
-        print("##POST login")
-        try_time = 0
-        login_response = self.session.post(
-            BUU.MainURL, data=self.POSTDate, headers=BUU.InitHeader
-        )
-        while try_time < 5:
-            login_response = self.session.get(
+    def login(self, max_retries=5):
+        for try_time in range(max_retries):
+            # 获取初始页面
+            init_response = self.session.get(BUU.MainURL, headers=BUU.InitHeader)
+            if not init_response.ok:
+                continue
+            self.soup = BeautifulSoup(init_response.text, "lxml")
+
+            # 更新动态参数
+            self.POSTDate["__VIEWSTATE"] = self.soup.find(
+                "input", {"name": "__VIEWSTATE"}
+            )["value"]
+            self.POSTDate["txtKeyModulus"] = self.soup.find(
+                "input", {"name": "txtKeyModulus"}
+            )["value"]
+
+            # 加密密码
+            exponent = int(self.POSTDate["txtKeyExponent"], 16)
+            modulus = int(self.POSTDate["txtKeyModulus"], 16)
+            rsa_pubkey = rsa.PublicKey(modulus, exponent)
+            encrypted_pass = rsa.encrypt(self.password.encode(), rsa_pubkey)
+            self.POSTDate["TextBox2"] = binascii.b2a_hex(encrypted_pass).decode()
+
+            # 获取新验证码
+            self.__get_check_code_ocr()
+
+            # 发送登录请求
+            login_response = self.session.post(
+                BUU.MainURL, data=self.POSTDate, headers=BUU.InitHeader
+            )
+
+            # 验证登录结果
+            check_response = self.session.get(
                 BUU.xsmain + self.username, headers=BUU.InitHeader
             )
-            # 进入主页
-            self.soup = BeautifulSoup(login_response.text, "lxml")
-            if login_response.ok and self.soup.find("title").text == "正方教务管理系统":
-                print("#Login：" + self.soup.find("title").text)
-                self.name = self.soup.find("span", id="xhxm").text[0:-2]
-                print("#姓名：", self.name)
-                print("\033[1;36m 登录成功 \033[0m")
+            check_soup = BeautifulSoup(check_response.text, "lxml")
+            if check_soup.find("title").text == "正方教务管理系统":
+                self.name = check_soup.find("span", id="xhxm").text[:-2]
+                print(time.strftime("%Y-%m-%d %H:%M:%S ") + self.name + "登录成功！")
                 return 200
-            else:
-                try_time += 1
+            print(f"登录失败，正在重试（{try_time + 1}/{max_retries}）...")
+            time.sleep(1)  # 避免频繁请求
+
         return 402
 
 

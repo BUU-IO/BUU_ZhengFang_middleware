@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 from LOGIN import Account
@@ -8,7 +8,7 @@ executor = ThreadPoolExecutor(max_workers=10)  # 根据服务器配置调整
 
 
 @app.post("/login")
-async def login_endpoint(username: str, password: str):
+async def login_endpoint(username: str = Form(), password: str = Form()):
     """登录接口"""
     account = Account(name=username, password=password)
 

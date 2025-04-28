@@ -95,6 +95,4 @@ def run(image_path, dir_now):
     images = split_image(image)
     models, file_names = load_models_cached(dir_now)
     result = ocr(images, models, file_names)
-    print(result)
-    print("耗时：", time.time() - run_before, "s")
     return result
