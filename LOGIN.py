@@ -113,9 +113,7 @@ class Account:
             self.__get_check_code_ocr()
 
             # 发送登录请求
-            login_response = self.session.post(
-                BUU.MainURL, data=self.POSTDate, headers=BUU.InitHeader
-            )
+            self.session.post(BUU.MainURL, data=self.POSTDate, headers=BUU.InitHeader)
 
             # 验证登录结果
             check_response = self.session.get(
