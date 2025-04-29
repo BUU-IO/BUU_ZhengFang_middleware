@@ -7,7 +7,7 @@ app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=10)  # 根据服务器配置调整
 
 
-@app.post("/login")
+@app.post("/zhengfang_login")
 async def login_endpoint(username: str = Form(), password: str = Form()):
     """登录接口"""
     account = Account(name=username, password=password)
