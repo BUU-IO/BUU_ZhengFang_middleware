@@ -27,7 +27,8 @@ class BUU:
 
 # Account为登录用的账户
 class Account:
-    def __init__(self, name=None, password=None):
+    def __init__(self, name=None, password=None, identify=0):
+        identify_list = ["部门", "教师", "学生"]
         self.session = requests.Session()
         self.soup = None
         self.POSTDate = {
@@ -39,7 +40,7 @@ class Account:
             "txtUserName": "",
             "TextBox2": "",
             "txtSecretCode": "-1",
-            "RadioButtonList1": "学生",
+            "RadioButtonList1": identify_list[identify],
             "Button1": "登录",
             "txtKeyExponent": "010001",
             "txtKeyModulus": "随机码",

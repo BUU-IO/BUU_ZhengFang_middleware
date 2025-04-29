@@ -8,9 +8,11 @@ executor = ThreadPoolExecutor(max_workers=10)  # 根据服务器配置调整
 
 
 @app.post("/zhengfang_login")
-async def login_endpoint(username: str = Form(), password: str = Form()):
+async def login_endpoint(
+    username: str = Form(), password: str = Form(), identify: int = Form()
+):
     """登录接口"""
-    account = Account(name=username, password=password)
+    account = Account(name=username, password=password, identify=identify)
 
     try:
         # 在独立线程中执行同步IO操作
