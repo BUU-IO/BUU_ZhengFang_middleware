@@ -1,18 +1,30 @@
 from fastapi import FastAPI, Form
+import base64
+from typing import Annotated
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 from LOGIN import Account
+from pydantic import BaseModel
 
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=10)  # 根据服务器配置调整
 
 
-@app.post("/zhengfang_login")
-async def login_endpoint(
-    username: str = Form(), password: str = Form(), identify: int = Form()
-):
+class AuthForm(BaseModel):
+    flowKey: str
+    username: str
+    password: str
+    identify: str
+
+
+@app.post("/login_auth")
+async def login_endpoint(data: Annotated[AuthForm, Form()]):
+    # 解密数据
+
     """登录接口"""
-    account = Account(name=username, password=password, identify=identify)
+    account = Account(
+        name=data.username, password=data.password, identify=data.identify
+    )
 
     try:
         # 在独立线程中执行同步IO操作
@@ -22,7 +34,7 @@ async def login_endpoint(
         return {
             "status": "success" if status_code == 200 else "error",
             "code": status_code,
-            "username": username,
+            "username": data.username,
             "name": account.name,
         }
     except Exception as e:
