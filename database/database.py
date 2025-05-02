@@ -1,58 +1,29 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.pool import QueuePool
-import threading
-import contextlib
+from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
+import os
 
-# 数据库配置
-DATABASE_URI = "postgresql+psycopg2://user:password@localhost/mydatabase"
-POOL_SIZE = 5
-MAX_OVERFLOW = 10
-POOL_RECYCLE = 3600
-
-# 创建数据库引擎
-engine = create_engine(
-    DATABASE_URI,
-    poolclass=QueuePool,
-    pool_size=POOL_SIZE,
-    max_overflow=MAX_OVERFLOW,
-    pool_recycle=POOL_RECYCLE,
-    echo=False,  # 设置为True可显示SQL日志
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+psycopg2://user:password@localhost/auth_db"
 )
 
-# 创建线程安全的Session工厂
-SessionFactory = sessionmaker(bind=engine)
-Session = scoped_session(SessionFactory)
+engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=10, pool_pre_ping=True)
 
-# 声明模型基类
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
 
 
-# 上下文管理器用于自动会话管理
-@contextlib.contextmanager
-def session_scope():
-    """提供事务范围的上下文管理器"""
-    session = Session()
+@contextmanager
+def get_db():
+    """数据库会话上下文管理器"""
+    db = SessionLocal()
     try:
-        yield session
-        session.commit()
-    except Exception as e:
-        session.rollback()
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
         raise
     finally:
-        session.close()
-
-
-def init_db():
-    """初始化数据库表结构"""
-    Base.metadata.create_all(bind=engine)
-
-
-def shutdown_db():
-    """关闭数据库连接池"""
-    engine.dispose()
-
-
-# 注册线程结束时的清理钩子
-threading._register_atexit(shutdown_db)
+        db.close()

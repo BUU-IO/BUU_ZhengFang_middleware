@@ -1,81 +1,46 @@
-from sqlalchemy import Column, Integer, String, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session
-from datetime import datetime
-
-# 声明模型基类
-Base = declarative_base()
+from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from .database import Base
+import uuid
+import datetime
 
 
-# 示例用户模型
-class User(Base):
-    """用户数据模型"""
+def gen_uuid():
+    return str(uuid.uuid4())
 
-    __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
-    username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(100), unique=True)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+class Client(Base):
+    __tablename__ = "clients"
 
-    # CRUD 操作方法
-    @classmethod
-    def create(cls, db_session: Session, **kwargs):
-        """创建新用户"""
-        try:
-            user = cls(**kwargs)
-            db_session.add(user)
-            db_session.commit()
-            return user
-        except Exception as e:
-            db_session.rollback()
-            raise e
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    client_id = Column(String(64), unique=True, nullable=False)
+    client_secret = Column(String(256), nullable=False)
+    redirect_uris = Column(String(1024), nullable=False)  # JSON数组存储
+    is_confidential = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
 
-    @classmethod
-    def get(cls, db_session: Session, user_id):
-        """根据ID获取用户"""
-        return db_session.query(cls).filter_by(id=user_id).first()
 
-    @classmethod
-    def get_all(cls, db_session):
-        """获取所有用户"""
-        return db_session.query(cls).all()
+class AuthorizationCode(Base):
+    __tablename__ = "authorization_codes"
 
-    @classmethod
-    def update(cls, db_session: Session, user_id, **kwargs):
-        """更新用户信息"""
-        try:
-            user = db_session.query(cls).filter_by(id=user_id).first()
-            if user:
-                for key, value in kwargs.items():
-                    setattr(user, key, value)
-                db_session.commit()
-            return user
-        except Exception as e:
-            db_session.rollback()
-            raise e
+    code = Column(String(128), primary_key=True)
+    client_id = Column(UUID, ForeignKey("clients.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    redirect_uri = Column(String(512), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+    scope = Column(String(256))
 
-    @classmethod
-    def delete(cls, db_session: Session, user_id):
-        """删除用户"""
-        try:
-            user = db_session.query(cls).filter_by(id=user_id).first()
-            if user:
-                db_session.delete(user)
-                db_session.commit()
-                return True
-            return False
-        except Exception as e:
-            db_session.rollback()
-            raise e
 
-    @classmethod
-    def get_by_username(cls, db_session: Session, username):
-        """根据用户名获取用户"""
-        return db_session.query(cls).filter_by(username=username).first()
+class Token(Base):
+    __tablename__ = "tokens"
 
-    @classmethod
-    def get_by_email(cls, db_session: Session, email):
-        """根据邮箱获取用户"""
-        return db_session.query(cls).filter_by(email=email).first()
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    access_token = Column(String(512), unique=True, nullable=False)
+    refresh_token = Column(String(512), unique=True)
+    token_type = Column(String(32), default="bearer")
+    expires_at = Column(DateTime, nullable=False)
+    scope = Column(String(256))
+    client_id = Column(UUID, ForeignKey("clients.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    revoked = Column(Boolean, default=False)
