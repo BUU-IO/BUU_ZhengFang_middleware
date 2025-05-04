@@ -1,63 +1,54 @@
 from fastapi import FastAPI, Request, Depends, HTTPException, status, Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from jose import jwt, JWTError, ExpiredSignatureError
+from datetime import datetime, timedelta, timezone
 from LOGIN import Account
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
-from .database.database import get_db
-from .database.crud import ClientService, AuthCodeService, TokenService
+from database.database import get_db
+from database.crud import ClientService, AuthCodeService
 import asyncio
 import secrets
+import json
 
 
 # 应用初始化
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=10)
+key_json = json.load(open("config.json", "r", encoding="utf-8"))
 
 # 会话中间件
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key-here")
+app.add_middleware(SessionMiddleware, secret_key=key_json["secret_key"])
 
 # OAuth2 配置
 OAUTH2_SCHEME = OAuth2AuthorizationCodeBearer(
     authorizationUrl="/authorize",
     tokenUrl="/token",
-)
+)   
 
 # JWT 配置
-SECRET_KEY = "your-jwt-secret-key"
+SECRET_KEY = key_json["jwt_key"]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# 存储授权码和状态（生产环境应使用持久化存储）
-authorization_codes = {}
 
-
-# 辅助函数：生成CSRF令牌
+# 生成CSRF令牌
 def generate_csrf_token():
     return secrets.token_urlsafe(32)
 
 
-# 辅助函数
+# 创建一个access_token
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-# 登录页
-@app.get("/login")
-async def login_page(
-    request: Request, client_id: str, redirect_uri: str, state: Optional[str] = None
-):
-    return {"message": "请提交登录表单", "client_id": client_id}
 
 
 # 登录处理
@@ -68,9 +59,9 @@ async def handle_login(
     redirect_uri: str = Form(...),
     username: str = Form(...),
     password: str = Form(...),
-    state: Optional[str] = Form(None),
     identify: str = Form(...),
     csrf_token: str = Form(...),
+    db: Session = Depends(get_db),  # 注入数据库会话
 ):
     # 验证会话中的授权参数
     auth_params = request.session.get("auth_params")
@@ -91,19 +82,36 @@ async def handle_login(
 
     if status_code != 200:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录失败")
+    # 将实际登录账号存储在会话
+    request.session["authenticated_user"] = username
 
-    # 生成授权码
+    # 生成并存储授权码到数据库
     auth_code = secrets.token_urlsafe(32)
-    authorization_codes[auth_code] = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "user": username,
-        "expires": datetime.utcnow() + timedelta(minutes=5),
-    }
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    AuthCodeService.create_code(
+        db,
+        code=auth_code,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        user_account=username,  # 新增字段存储实际账号
+        expires_at=expires_at,
+    )
 
     # 构造重定向URL
-    params = f"code={auth_code}&state={state}" if state else f"code={auth_code}"
-    return RedirectResponse(f"{redirect_uri}?{params}")
+    redirect_url = auth_params["redirect_uri"]
+    params = []
+    if auth_code:
+        params.append(f"code={auth_code}")
+    if auth_params["state"]:
+        params.append(f"state={auth_params['state']}")
+
+    # 清理会话
+    del request.session["auth_params"]
+    del request.session["csrf_token"]
+
+    return RedirectResponse(
+        url=f"{redirect_url}?{'&'.join(params)}", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 # 授权端点
@@ -112,18 +120,45 @@ async def authorize(
     request: Request,
     client_id: str,
     redirect_uri: str,
+    state: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     # 验证客户端
     if not ClientService.verify_client(db, client_id, redirect_uri):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "无效客户端")
 
-    # 存储会话参数
+    # 生成并存储CSRF令牌
+    csrf_token = secrets.token_urlsafe(32)
     request.session["auth_params"] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
+        "state": state,
     }
-    return RedirectResponse("/login")
+    request.session["csrf_token"] = csrf_token
+
+    # 重定向到Next.js登录页面
+    return RedirectResponse(url="/login")
+
+
+@app.get("/auth/params")
+async def get_auth_params(request: Request):
+    """给前端获取授权参数的端点"""
+    auth_params = request.session.get("auth_params")
+    csrf_token = request.session.get("csrf_token")
+
+    if not auth_params or not csrf_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="会话无效或已过期"
+        )
+
+    return JSONResponse(
+        {
+            "client_id": auth_params["client_id"],
+            "redirect_uri": auth_params["redirect_uri"],
+            "state": auth_params["state"],
+            "csrf_token": csrf_token,
+        }
+    )
 
 
 @app.post("/token")
@@ -133,17 +168,36 @@ async def get_token(code: str = Form(...), db: Session = Depends(get_db)):
     if not auth_code:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "无效授权码")
 
-    # 标记授权码已使用
-    auth_code.used = True
-    db.commit()
-
-    # 生成访问令牌
-    token = TokenService.create_token(
-        db, user_id=auth_code.user_id, client_id=auth_code.client_id
+    # 生成JWT访问令牌
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": auth_code.user_account},  # 从授权码获取实际用户账号
+        expires_delta=access_token_expires,
     )
 
     return {
-        "access_token": token.access_token,
-        "refresh_token": token.refresh_token,
-        "expires_in": 3600,
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": access_token_expires.seconds,
     }
+
+
+@app.get("/user_info")
+async def get_user_info(token: str = Depends(OAUTH2_SCHEME)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="无效的访问令牌",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        # 解码JWT令牌
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "令牌已过期")
+    except JWTError:
+        raise credentials_exception
+
+    return {"username": username}

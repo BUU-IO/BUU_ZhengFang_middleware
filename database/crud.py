@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
-from .models import Client, AuthorizationCode, Token
-from datetime import datetime, timedelta
+from .models import Client, AuthorizationCode
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 import secrets
 
@@ -14,14 +14,14 @@ class ClientService:
         client = db.query(Client).filter(Client.client_id == client_id).first()
         if not client:
             return False
-        return redirect_uri in client.redirect_uris
+        return client.redirect_uris == redirect_uri
 
 
 class AuthCodeService:
     @staticmethod
     def create_code(db: Session, client_id: str, user_id: str, redirect_uri: str):
         code = secrets.token_urlsafe(64)
-        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         auth_code = AuthorizationCode(
             code=code,
             client_id=client_id,
@@ -35,33 +35,17 @@ class AuthCodeService:
 
     @staticmethod
     def validate_code(db: Session, code: str):
-        return (
+        current_time = datetime.now(timezone.utc)
+        auth_code = (
             db.query(AuthorizationCode)
             .filter(
                 AuthorizationCode.code == code,
-                AuthorizationCode.expires_at > datetime.utcnow(),
                 AuthorizationCode.used == False,
+                AuthorizationCode.expires_at > current_time,
             )
             .first()
         )
-
-
-class TokenService:
-    @staticmethod
-    def create_token(
-        db: Session, user_id: str, client_id: str, expires_minutes: int = 30
-    ):
-        access_token = secrets.token_urlsafe(128)
-        refresh_token = secrets.token_urlsafe(128)
-        expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
-
-        token = Token(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at,
-            user_id=user_id,
-            client_id=client_id,
-        )
-        db.add(token)
-        db.commit()
-        return token
+        if auth_code:
+            auth_code.used = True
+            db.commit()
+        return auth_code

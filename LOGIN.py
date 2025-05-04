@@ -46,7 +46,7 @@ class Account:
             "txtKeyModulus": "随机码",
         }
         self.username = name
-        self.password = password
+        self.password: str = password
         self.POSTDate["txtUserName"] = name
         self.POSTDate["TextBox2"] = password
         self.name = ""
@@ -136,7 +136,7 @@ class Encrypt(object):
         self.e = e
         self.m = m
 
-    def encrypt(self, message):
+    def encrypt(self, message: str):
         mm = int(self.m, 16)
         ee = int(self.e, 16)
         rsa_pubkey = rsa.PublicKey(mm, ee)
@@ -164,8 +164,3 @@ class Encrypt(object):
         block = rsa.transform.int2bytes(encrypted, keylength)
 
         return block
-
-
-if __name__ == "__main__":
-    account = Account()
-    account.login()

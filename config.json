@@ -1,0 +1,5 @@
+{
+    "jwt_key": "jwt_key",
+    "secret_key": "secret_key",
+    "DATABASE_URL": "postgresql+psycopg2://auth:4CtL2haJFSFw@10.0.0.6/auth?options=-csearch_path=oauth"
+}
